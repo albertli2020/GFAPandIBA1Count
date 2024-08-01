@@ -1,21 +1,71 @@
-import os
+import matplotlib.pyplot as plt
 import tifffile as tif
-from PIL import Image
+import numpy as np
+import os 
 
-tiff_stack_path = 'path to tif file :O'
-output_dir = 'path to folder where tif stack opened should go'
+url = "/Users/albert2/Downloads/d1_reimage/fov_3_MMStack_4-Pos016_011.ome.tif"
+tif_stack = tif.imread(url)
 
-if not os.path.exists(output_dir):
-    os.makedirs(output_dir)
+# Show image, not needed tehe
+# image = np.stack((tif_stack[2], tif_stack[1], tif_stack[0]), axis = -1)
+# image = ((image - 181) / 4666.0 * 255).astype(np.uint8)
+# plt.imshow(image)
+# plt.show()
 
-tif_stack = tif.imread(tiff_stack_path)
+blueChannel = tif_stack[0]
+greenChannel = tif_stack[1]
+redChannel = tif_stack[2]
 
-num_images = tif_stack.shape[0]
-print(f'The stack contains {num_images} images.')
+plt.imshow(blueChannel, cmap="Blues_r")
+plt.show()
+plt.imshow(greenChannel, cmap="Greens_r")
+plt.show()
+plt.imshow(redChannel, cmap="Reds_r")
+plt.show()
 
-for i in range(num_images):
-    image = tif_stack[i]
-    output_path = os.path.join(output_dir, f'image_{i+1}.tif')
-    Image.fromarray(image).save(output_path)
+buffer = 7.4
+threshold = np.max(blueChannel)/buffer
+new = np.copy(blueChannel)
+new[np.where(new < threshold)] = 0
+plt.imshow(new, cmap='Blues_r')
+plt.show()
 
-print(f'All {num_images} images have been saved in the folder "{output_dir}".')
+dx = [-1, 1, 0, 0, 1,-1,-1, 1]
+dy = [ 0, 0, 1,-1, 1, 1,-1,-1]
+
+def fill(x, y):
+    
+    ret = 0
+    new[x][y] = 0
+    for i in range(8):
+        nx, ny = x+dx[i], y+dy[i]
+        if (0 <= nx < 1200 and 0 <= ny < 1200 and not(new[nx][ny] == 0)):
+            ret += fill(nx, ny)
+    return ret + 1
+
+cells = 0
+px = []
+py = []
+sizes = []
+for i in range(1200):
+    for j in range(1200):
+        size = fill(i, j)
+        cells += 1
+        px.append(i)
+        py.append(i)
+        sizes.append(size)
+
+for i in range(cells):
+    blueChannel[px[i]][py[i]] = 170
+    for j in range(8):
+        nx, ny = px[i]+dx[i], py[i]+dy[i]
+        if (nx >= 0 and nx < 1200 and ny >= 0 and ny < 1200):
+            blueChannel[nx][ny] = 170
+
+plt.imshow(blueChannel, cmap='Blues_r')
+plt.show()
+
+print(px)
+print(py)
+print(sizes)
+print(np.mean(sizes))
