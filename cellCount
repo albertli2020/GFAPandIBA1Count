@@ -1,106 +1,106 @@
-import matplotlib.pyplot as plt
-import tifffile as tif
 import numpy as np
 import os 
-import cv2
-from skimage.segmentation import watershed
-from skimage.feature import peak_local_max
-from scipy import ndimage as ndi
+from skimage.measure import regionprops
+from cellpose import models
+import csv
+import re
+import tifffile as tif
+from multiprocessing import Pool, cpu_count
+import logging
 
-url = "/Users/Albert/Downloads/d1_reimage/fov_3_MMStack_4-Pos010_007.ome.tif"
-tif_stack = tif.imread(url)
-# Show image, not needed tehe
-# image = np.stack((tif_stack[2], tif_stack[1], tif_stack[0]), axis = -1)
-# image = ((image - 181) / 4666.0 * 255).astype(np.uint8)
-# plt.imshow(image)
-# plt.show()
+base_dir = "/Users/Albert/Downloads/d1_reimage/"
+file_pattern = r'fov_3_MMStack_4-Pos(\d+)_(\d+)\.ome\.tif'
+output_file = 'cell_analysis_results.csv'
+batch_size = 10  # Adjust based on your system's capabilities
 
-blueChannel = tif_stack[263][0]
-greenChannel = tif_stack[263][1]
-redChannel = tif_stack[263][2]
-fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(15, 5))
-ax1.imshow(blueChannel, cmap="Blues_r")
-ax1.set_title("Blue Channel")
-ax2.imshow(greenChannel, cmap="Greens_r")
-ax2.set_title("Green Channel")
-ax3.imshow(redChannel, cmap="Reds_r")
-ax3.set_title("Red Channel")
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def preprocess_image(channel):
-    # Apply Gaussian blur
-    blurred = cv2.GaussianBlur(channel, (11, 11), 0)
-    # Apply Otsu's thresholding
-    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return thresh
+def postoindex(x, y):
+    if y % 2 == 0:
+        return y * 20 + x
+    else:
+        return (y // 2 + 1) * 40 - x - 1
 
-blue_thresh = preprocess_image(blueChannel)
+# Initialize Cellpose model globally
+model = models.Cellpose(gpu=False, model_type='cyto')
 
+def segment_cells_cellpose(image):
+    masks, _, _, _ = model.eval(image, diameter=None, channels=[2,0])
+    return masks
 
-
-buffer = 7.4
-threshold = np.max(blueChannel)/buffer
-new = np.copy(blueChannel)
-new[np.where(new < threshold)] = 0
-
-dx = [-1, 1, 0, 0, 1,-1,-1, 1]
-dy = [ 0, 0, 1,-1, 1, 1,-1,-1]
-
-def fill(x, y):
-    hist = [(x, y)]
-    stack = [(x, y)]
-    size = 0
-
-    while stack:
-        cx, cy = stack.pop()
-        if new[cx][cy] == 0:
-            continue
+def process_image(args):
+    filename, x, y = args
+    try:
+        logging.info(f"Processing image at position ({x}, {y})")
         
-        new[cx][cy] = 0
-        size += 1
+        # Read the image
+        with tif.TiffFile(os.path.join(base_dir, filename)) as tif_file:
+            image = tif_file.series[0].pages[0].asarray()
+        
+        # Handle both 2D and 3D arrays
+        if image.ndim == 2:
+            blue_channel = image  # The image is already a single channel
+        elif image.ndim == 3:
+            blue_channel = image[0]  # Assuming blue is the first channel
+        else:
+            raise ValueError(f"Unexpected image dimensions: {image.ndim}")
+        
+        labels = segment_cells_cellpose(blue_channel)
+        
+        cell_count = np.max(labels)
+        
+        labeled_mask = (labels > 0).astype(np.uint8) * labels
+        
+        cell_sizes = [region.area for region in regionprops(labeled_mask) if region.area >= 50]
+        avg_cell_size = np.mean(cell_sizes) if cell_sizes else 0
+        
+        return {
+            'position_x': x,
+            'position_y': y,
+            'filename': filename,
+            'cell_count': cell_count,
+            'avg_cell_size': avg_cell_size
+        }
+    except Exception as e:
+        logging.error(f"Error processing {filename}: {str(e)}")
+        return None
 
-        for i in range(8):
-            nx, ny = cx + dx[i], cy + dy[i]
-            if 0 <= nx < 1200 and 0 <= ny < 1200 and new[nx][ny] != 0:
-                stack.append((nx, ny))
-                hist.append((nx, ny))
+def file_generator():
+    for filename in os.listdir(base_dir):
+        if filename.endswith('.ome.tif'):
+            match = re.search(file_pattern, filename)
+            if match:
+                x, y = int(match.group(1)), int(match.group(2))
+                yield (filename, x, y)
 
-    return size, list(set(hist))
 
-cells = 0
-thresholdC = 140
-px = []
-py = []
-sizes = []
-histories = []
+def process_image_with_index(args):
+    index, (filename, x, y) = args
+    result = process_image((filename, x, y))
+    if result:
+        result['index'] = index
+    return result
 
-for i in range(1200):
-    for j in range(1200):
-        if new[i][j] != 0:
-            size, history = fill(i, j)
-            if size > thresholdC: 
-                cells += 1
-                px.append(i)
-                py.append(j)
-                sizes.append(size)
-                histories.append(history)
-print(cells)
+def main():
+    fieldnames = ['index', 'position_x', 'position_y', 'filename', 'cell_count', 'avg_cell_size']
 
-mask = np.copy(blueChannel)
-mask += 2
-for i in range(cells):
-    for j in range(sizes[i]):
-        mask[histories[i][j]] = 1
+    # Collect all file information first
+    all_files = list(enumerate(file_generator()))
 
-mask[np.where(mask != 1)] = 0
+    with open(output_file, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
 
-ax4.imshow(mask, cmap='Blues_r')
-ax4.set_title("Masks")
-plt.show()
+        # Process all files in one go
+        with Pool(processes=cpu_count()) as pool:
+            results = pool.map(process_image_with_index, all_files)
 
-print(px)
-print(py)
-print(sizes)
-print(np.mean(sizes))
+        # Write results to CSV
+        for result in results:
+            if result:
+                writer.writerow(result)
 
-outlierThreshold = np.mean(sizes) + (1.5 * np.std(sizes))
-histories[np.where(histories)]
+    logging.info(f"Analysis complete. Results written to {output_file}")
+
+if __name__ == "__main__":
+    main()
