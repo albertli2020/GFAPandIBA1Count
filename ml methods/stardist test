@@ -1,0 +1,107 @@
+import numpy as np
+import cv2
+from stardist import random_label_cmap, _draw_polygons, export_imagej_rois
+from stardist.models import StarDist2D
+import tifffile as tif
+from matplotlib import pyplot as plt
+from skimage.measure import regionprops
+
+
+url = "/Users/albert2/Downloads/d1_reimage/fov_3_MMStack_4-Pos016_013.ome.tif"
+tif_stack = tif.imread(url)
+# Show image, not needed tehe
+# image = np.stack((tif_stack[2], tif_stack[1], tif_stack[0]), axis = -1)
+# image = ((image - 181) / 4666.0 * 255).astype(np.uint8)
+# plt.imshow(image)
+# plt.show()
+
+# 16 13 is 263
+# 16 12 is 256
+
+blueChannel = tif_stack[256][0]
+greenChannel = tif_stack[256][1]
+redChannel = tif_stack[256][2]
+fig, (ax1, ax2, ax3) = plt.subplots(1, 3, figsize=(15, 5))
+ax1.imshow(blueChannel, cmap="Blues_r")
+ax1.set_title("Blue Channel")
+ax2.imshow(greenChannel, cmap="Greens_r")
+ax2.set_title("Green Channel")
+ax3.imshow(redChannel, cmap="Reds_r")
+ax3.set_title("Red Channel")
+plt.show()
+
+def preprocess_image(channel):
+    # Normalize the image to 0-1 range
+    channel_norm = (channel - channel.min()) / (channel.max() - channel.min())
+    return channel_norm
+
+def segment_cells_stardist(channel):
+    # Preprocess the image
+    img = preprocess_image(channel)
+    
+    # Load the pre-trained model
+    model = StarDist2D.from_pretrained('2D_versatile_fluo')
+
+    # Predict on the image
+    labels, details = model.predict_instances(img)
+
+    return labels
+
+# Apply the segmentation to the blue channel
+labels = segment_cells_stardist(blueChannel)
+
+print(f"Total number of cells: {np.max(labels)}")
+
+# Visualize the results
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 8))
+
+ax1.imshow(blueChannel, cmap='gray')
+ax1.set_title('Original Image')
+
+ax2.imshow(blueChannel, cmap='gray')
+ax2.imshow(labels, cmap=random_label_cmap(), alpha=0.5)
+ax2.set_title('StarDist Segmentation')
+
+plt.show()
+
+cell_count = np.max(labels)
+
+# Create a labeled mask
+labeled_mask = np.zeros_like(blueChannel, dtype=np.uint8)
+for label in range(1, cell_count + 1):
+    labeled_mask[labels == label] = label
+
+# Display labeled mask
+fig, ax = plt.subplots(figsize=(10, 10))
+ax.imshow(labeled_mask, cmap='nipy_spectral')
+
+# Add labels to each cell
+for region in regionprops(labeled_mask):
+    # Skip small regions
+    if region.area < 50:
+        continue
+    # Draw label at the centroid of each region
+    y, x = region.centroid
+    ax.text(x, y, str(region.label), fontsize=8, color='white', 
+            ha='center', va='center')
+
+ax.set_title(f"Labeled Mask (Total cells: {cell_count})")
+plt.show()
+
+# Function to display masks with labels
+def display_labeled_mask(mask, title, cmap):
+    fig, ax = plt.subplots(figsize=(10, 10))
+    ax.imshow(mask, cmap=cmap)
+    
+    for region in regionprops(labeled_mask):
+        if region.area < 50:
+            continue
+        y, x = region.centroid
+        ax.text(x, y, str(region.label), fontsize=8, color='white', 
+                ha='center', va='center')
+    
+    ax.set_title(title)
+    plt.show()
+
+print(f"Total number of cells: {cell_count}")

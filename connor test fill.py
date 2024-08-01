@@ -1,46 +1,39 @@
 import matplotlib.pyplot as plt
 import tifffile as tif
 import numpy as np
-import os 
-import cv2
-from skimage.segmentation import watershed
-from skimage.feature import peak_local_max
-from scipy import ndimage as ndi
+
+# blue = "/Users/connor/Downloads/temp/image_1.tif"
+# green = "/Users/connor/Downloads/temp/image_2.tif"
+# red = "/Users/connor/Downloads/temp/image_3.tif"
+# img = plt.imread(blue)
+# plt.imshow(img, cmap="Blues_r")
+# plt.show()
+# img = plt.imread(green)
+# plt.imshow(img, cmap="Greens_r")
+# plt.show()
+# img = plt.imread(red)
+# plt.imshow(img, cmap="Reds_r")
+# plt.show()
 
 url = "/Users/albert2/Downloads/d1_reimage/fov_3_MMStack_4-Pos016_013.ome.tif"
 tif_stack = tif.imread(url)
+
 # Show image, not needed tehe
 # image = np.stack((tif_stack[2], tif_stack[1], tif_stack[0]), axis = -1)
 # image = ((image - 181) / 4666.0 * 255).astype(np.uint8)
 # plt.imshow(image)
 # plt.show()
 
-blueChannel = tif_stack[263][0]
-greenChannel = tif_stack[263][1]
-redChannel = tif_stack[263][2]
-fig, (ax1, ax2, ax3, ax4) = plt.subplots(1, 4, figsize=(15, 5))
-ax1.imshow(blueChannel, cmap="Blues_r")
-ax1.set_title("Blue Channel")
-ax2.imshow(greenChannel, cmap="Greens_r")
-ax2.set_title("Green Channel")
-ax3.imshow(redChannel, cmap="Reds_r")
-ax3.set_title("Red Channel")
-
-def preprocess_image(channel):
-    # Apply Gaussian blur
-    blurred = cv2.GaussianBlur(channel, (11, 11), 0)
-    # Apply Otsu's thresholding
-    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return thresh
-
-blue_thresh = preprocess_image(blueChannel)
-
-
+bluechannel = tif_stack[263][0]
+# plt.imshow(bluechannel, cmap='Blues_r')
+# plt.show()
 
 buffer = 7.4
-threshold = np.max(blueChannel)/buffer
-new = np.copy(blueChannel)
+threshold = np.max(bluechannel)/buffer
+new = np.copy(bluechannel)
 new[np.where(new < threshold)] = 0
+# plt.imshow(new, cmap='Blues_r')
+# plt.show()
 
 dx = [-1, 1, 0, 0, 1,-1,-1, 1]
 dy = [ 0, 0, 1,-1, 1, 1,-1,-1]
@@ -77,15 +70,21 @@ for i in range(1200):
     for j in range(1200):
         if new[i][j] != 0:
             size, history = fill(i, j)
-            if size > thresholdC: 
+            if size > thresholdC:  # Only record cells
                 cells += 1
                 px.append(i)
                 py.append(j)
                 sizes.append(size)
                 histories.append(history)
+
+# print(px)
+# print(py)
+# print(sizes)
+# print(np.mean(sizes))
+
 print(cells)
 
-mask = np.copy(blueChannel)
+mask = np.copy(bluechannel)
 mask += 2
 for i in range(cells):
     for j in range(sizes[i]):
@@ -93,14 +92,9 @@ for i in range(cells):
 
 mask[np.where(mask != 1)] = 0
 
-ax4.imshow(mask, cmap='Blues_r')
-ax4.set_title("Masks")
+plt.imshow(mask, cmap='Blues_r')
 plt.show()
 
-print(px)
-print(py)
-print(sizes)
-print(np.mean(sizes))
-
 outlierThreshold = np.mean(sizes) + (1.5 * np.std(sizes))
+
 histories[np.where(histories)]
