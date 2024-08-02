@@ -1,0 +1,7 @@
+def postoindex(x, y):
+    if y % 2 == 0:
+        return y * 20 + x
+    else:
+        return (y // 2 + 1) * 40 - x - 1
+    
+print(postoindex(12, 2))
